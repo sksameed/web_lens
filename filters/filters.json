@@ -1,0 +1,20 @@
+{
+  "glasses": {
+    "image": "glasses.png",
+    "anchor": "eyes",
+    "widthFactor": 2.2,
+    "heightFactor": 0.5
+  },
+  "ears": {
+    "image": "dog_ears.png",
+    "anchor": "forehead",
+    "widthFactor": 2.4,
+    "heightFactor": 0.9
+  },
+  "mask": {
+    "image": "mask.png",
+    "anchor": "nose",
+    "widthFactor": 1.3,
+    "heightFactor": 1.5
+  }
+}

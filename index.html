@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Snap Filter App</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+</head>
+
+<body>
+
+  <h1>📸 Snap Filter App</h1>
+
+  <div class="container">
+    <video id="video" autoplay muted></video>
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <div class="controls">
+    <button onclick="setFilter('glasses')">😎 Glasses</button>
+    <button onclick="setFilter('ears')">🐶 Dog Ears</button>
+    <button onclick="setFilter('mask')">🎭 Mask</button>
+    <button onclick="setFilter('none')">❌ Clear</button>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

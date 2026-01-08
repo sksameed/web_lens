@@ -1,0 +1,37 @@
+body {
+  font-family: Arial, sans-serif;
+  background: #111;
+  color: white;
+  text-align: center;
+}
+
+h1 {
+  margin-top: 20px;
+}
+
+.container {
+  position: relative;
+  width: 640px;
+  height: 480px;
+  margin: 20px auto;
+}
+
+video, canvas {
+  position: absolute;
+  width: 640px;
+  height: 480px;
+  border-radius: 10px;
+}
+
+.controls {
+  margin-top: 20px;
+}
+
+button {
+  padding: 10px 15px;
+  margin: 5px;
+  font-size: 16px;
+  cursor: pointer;
+  border-radius: 5px;
+  border: none;
+}
