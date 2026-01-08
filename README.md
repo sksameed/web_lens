@@ -31,15 +31,17 @@ This application accesses the camera, detects facial landmarks, and applies real
 
 ## 📂 Project Structure
 
+```text
 web_lens/
 ├── index.html
 ├── style.css
 ├── script.js
-├── filters/
-│ ├── filters.json
-│ ├── glasses.png
-│ ├── dog_ears.png
-│ └── mask.png
+└── filters/
+    ├── filters.json
+    ├── glasses.png
+    ├── dog_ears.png
+    └── mask.png
+```
 
 ---
 
