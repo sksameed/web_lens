@@ -1,140 +1,267 @@
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
 console.log("SCRIPT JS LOADED");
 
-canvas.width = 640;
-canvas.height = 480;
+class SnapFilterApp {
+  constructor() {
+    this.video = document.getElementById("video");
+    this.canvas = document.getElementById("canvas");
+    this.ctx = this.canvas.getContext("2d");
 
-let currentFilter = "none";
-let filters = {};
-let ready = false;
+    this.currentFilter = "none";
+    this.filters = {};
+    this.ready = false;
+    this.isCameraRunning = false;
 
-// ================= LOAD JSON =================
-fetch("filters/filters.json")
-  .then(r => {
-    console.log("JSON response:", r);
-    return r.json();
-  })
-  .then(config => {
-    console.log("JSON loaded:", config);
-    loadImages(config);
-  })
-  .catch(err => console.error("JSON ERROR:", err));
+    this.init();
+  }
 
-function loadImages(config) {
-  let loaded = 0;
-  const total = Object.keys(config).length;
+  async init() {
+    try {
+      // Inline configuration to avoid CORS/Fetch issues on local filesystem
+      const config = {
+        "glasses": {
+          "image": "glasses.png",
+          "anchor": "eyes",
+          "widthFactor": 2.2,
+          "heightFactor": 0.5
+        },
+        "ears": {
+          "image": "dog_ears.png",
+          "anchor": "forehead",
+          "widthFactor": 2.4,
+          "heightFactor": 0.9
+        },
+        "mask": {
+          "image": "mask.png",
+          "anchor": "nose",
+          "widthFactor": 1.3,
+          "heightFactor": 1.5
+        },
+        "whiskers": {
+          "image": "whiskers.png",
+          "anchor": "nose",
+          "widthFactor": 2.0,
+          "heightFactor": 0.5
+        }
+      };
 
-  Object.keys(config).forEach(key => {
-    const img = new Image();
-    img.src = `filters/${config[key].image}`;
+      this.filters = config;
+      await this.loadImages(config); // Note: Whiskers will fail to load if image not present, handled by error logic
 
-    img.onload = () => {
-      console.log("Loaded image:", img.src);
-      loaded++;
-      if (loaded === total) {
-        ready = true;
-        console.log("ALL FILTERS READY");
-      }
+      this.ready = true;
+      console.log("ALL FILTERS READY");
+      this.hideLoading();
+
+      this.setupMediaPipe();
+      this.setupEvents();
+    } catch (error) {
+      console.error("Initialization Failed:", error);
+      alert(`App failed to start: ${error.message || error}`);
+    }
+  }
+
+  loadImages(config) {
+    const promises = Object.keys(config).map(key => {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.src = `filters/${config[key].image}`;
+        img.onload = () => {
+          config[key].imageObj = img;
+          resolve();
+        };
+        // Soft fail for missing images (like whiskers placeholder)
+        img.onerror = () => {
+          console.warn(`Failed to load image: ${config[key].image}`);
+          resolve();
+        };
+      });
+    });
+    return Promise.all(promises);
+  }
+
+  setupMediaPipe() {
+    this.faceMesh = new FaceMesh({
+      locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`,
+    });
+
+    this.faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
+
+    this.faceMesh.onResults(this.onResults.bind(this));
+
+    this.camera = new Camera(this.video, {
+      onFrame: async () => {
+        await this.faceMesh.send({ image: this.video });
+      },
+      width: 1280, // Request higher res, will scale down if needed
+      height: 720
+    });
+
+    this.camera.start()
+      .then(() => {
+        this.isCameraRunning = true;
+        this.resizeCanvas(); // Initial resize
+      })
+      .catch(err => {
+        console.error("Camera access denied or error:", err);
+        alert("Camera access is required for this app.");
+      });
+  }
+
+  setupEvents() {
+    window.addEventListener('resize', this.resizeCanvas.bind(this));
+    this.video.addEventListener('loadedmetadata', this.resizeCanvas.bind(this));
+
+    // Bind filter buttons
+    window.setFilter = (name) => {
+      this.currentFilter = name;
+      console.log("Filter selected:", name);
     };
+  }
 
-    config[key].imageObj = img;
-  });
+  resizeCanvas() {
+    const vWidth = this.video.videoWidth;
+    const vHeight = this.video.videoHeight;
 
-  filters = config;
+    if (vWidth && vHeight) {
+      // Enforce aspect ratio on wrapper to prevent cropping
+      const wrapper = this.video.parentElement;
+      wrapper.style.aspectRatio = `${vWidth}/${vHeight}`;
+    }
+
+    // Make canvas match the video's displayed size for correct overlay
+    const rect = this.video.getBoundingClientRect();
+    this.canvas.width = rect.width;
+    this.canvas.height = rect.height;
+  }
+
+  onResults(results) {
+    // Clear canvas
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+    if (!this.ready || this.currentFilter === "none" || !results.multiFaceLandmarks) return;
+
+    if (results.multiFaceLandmarks.length > 0) {
+      this.drawFilter(results.multiFaceLandmarks[0], this.currentFilter);
+    }
+  }
+
+  drawFilter(lm, key) {
+    const f = this.filters[key];
+    if (!f || !f.imageObj) return;
+
+    // Helpers
+    const getPoint = (index) => ({
+      x: lm[index].x * this.canvas.width,
+      y: lm[index].y * this.canvas.height
+    });
+
+    const anchors = {
+      leftEye: getPoint(33),
+      rightEye: getPoint(263),
+      nose: getPoint(1),
+      forehead: getPoint(10),
+    };
+    anchors.centerX = (anchors.leftEye.x + anchors.rightEye.x) / 2;
+    // Calculate face width based on distance between eye outer corners
+    anchors.faceWidth = Math.hypot(
+      anchors.rightEye.x - anchors.leftEye.x,
+      anchors.rightEye.y - anchors.leftEye.y
+    );
+
+    const w = anchors.faceWidth * f.widthFactor;
+    const h = w * f.heightFactor;
+
+    let cx, cy, yOffset;
+
+    if (f.anchor === "eyes") {
+      cx = anchors.centerX;
+      cy = (anchors.leftEye.y + anchors.rightEye.y) / 2;
+      yOffset = -h / 2;
+    } else if (f.anchor === "nose") {
+      cx = anchors.nose.x;
+      cy = anchors.nose.y;
+      yOffset = -h * 0.25;
+    } else if (f.anchor === "forehead") {
+      cx = anchors.centerX;
+      cy = anchors.forehead.y;
+      // Lower the ears significantly so they sit ON the head
+      yOffset = -h * 0.75;
+    } else return;
+
+    // Calculate rotation
+    const angle = Math.atan2(
+      anchors.rightEye.y - anchors.leftEye.y,
+      anchors.rightEye.x - anchors.leftEye.x
+    );
+
+    this.ctx.save();
+    this.ctx.translate(cx, cy);
+    this.ctx.rotate(angle);
+    this.ctx.drawImage(f.imageObj, -w / 2, yOffset, w, h);
+    this.ctx.restore();
+  }
+
+  hideLoading() {
+    const loader = document.getElementById("loading");
+    if (loader) loader.style.display = 'none';
+  }
+
+  takePhoto() {
+    try {
+      const captureCanvas = document.createElement("canvas");
+      captureCanvas.width = this.canvas.width;
+      captureCanvas.height = this.canvas.height;
+      const ctx = captureCanvas.getContext("2d");
+
+      // Mirror the context so the saved image looks like the mirrored video feed
+      ctx.translate(captureCanvas.width, 0);
+      ctx.scale(-1, 1);
+
+      // Draw video frame
+      ctx.drawImage(this.video, 0, 0, captureCanvas.width, captureCanvas.height);
+
+      // Draw filter (filters are already on a mirrored canvas relative to world, so drawing them direct works)
+      // Wait, the main canvas IS NOT mirrored by CSS transform scaleX(-1). 
+      // We need to un-mirror it if we are drawing into a mirrored context?
+      // Actually, easiest way: 
+      // Video is mirrored via CSS. Canvas is mirrored via CSS.
+      // If we draw video normally to canvas, it is NOT mirrored.
+      // So we mirror the context, draw video. Now we have mirrored video.
+      // The filter canvas is visually correct on top of mirrored video.
+      // It means the filter coordinates on the main canvas are "true" coordinates (left is left).
+      // But since the main canvas css is flipped, "left" on canvas is "right" on screen.
+      // So if we draw the main canvas onto our mirrored capture canvas, it should just work?
+      // Let's test standard draw.
+
+      ctx.drawImage(this.canvas, 0, 0);
+
+      const dataUrl = captureCanvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = `snap_photo_${Date.now()}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      console.log("Photo taken successfully");
+    } catch (e) {
+      console.error("Photo Error:", e);
+      alert("Could not take photo");
+    }
+  }
 }
 
-// ================= FILTER SELECT =================
+// Initialize
+const app = new SnapFilterApp();
+
+// Global bindings for HTML buttons
 function setFilter(name) {
-  console.log("Filter selected:", name);
-  currentFilter = name;
+  if (window.setFilter) window.setFilter(name);
 }
 
-// ================= MEDIAPIPE =================
-const faceMesh = new FaceMesh({
-  locateFile: f =>
-    `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
-});
-
-faceMesh.setOptions({
-  maxNumFaces: 1,
-  refineLandmarks: true
-});
-
-faceMesh.onResults(onResults);
-
-const camera = new Camera(video, {
-  onFrame: async () => {
-    await faceMesh.send({ image: video });
-  },
-  width: 640,
-  height: 480
-});
-camera.start();
-
-// ================= MAIN LOOP =================
-function onResults(results) {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  if (!ready) return;
-  if (currentFilter === "none") return;
-  if (!results.multiFaceLandmarks) return;
-
-  drawFilter(results.multiFaceLandmarks[0], currentFilter);
-}
-
-// ================= HELPERS =================
-function p(lm, i) {
-  return { x: lm[i].x * canvas.width, y: lm[i].y * canvas.height };
-}
-
-function anchors(lm) {
-  const l = p(lm, 33);
-  const r = p(lm, 263);
-  return {
-    leftEye: l,
-    rightEye: r,
-    nose: p(lm, 1),
-    forehead: p(lm, 10),
-    centerX: (l.x + r.x) / 2,
-    faceWidth: Math.hypot(r.x - l.x, r.y - l.y)
-  };
-}
-
-// ================= DRAW =================
-function drawFilter(lm, key) {
-  const f = filters[key];
-  if (!f || !f.imageObj) return;
-
-  const a = anchors(lm);
-  const w = a.faceWidth * f.widthFactor;
-  const h = w * f.heightFactor;
-
-  let cx, cy, y;
-
-  if (f.anchor === "eyes") {
-    cx = a.centerX;
-    cy = (a.leftEye.y + a.rightEye.y) / 2;
-    y = -h / 2;
-  } else if (f.anchor === "nose") {
-    cx = a.nose.x;
-    cy = a.nose.y;
-    y = -h * 0.25;
-  } else if (f.anchor === "forehead") {
-    cx = a.centerX;
-    cy = a.forehead.y;
-    y = -h;
-  } else return;
-
-  const angle = Math.atan2(
-    a.rightEye.y - a.leftEye.y,
-    a.rightEye.x - a.leftEye.x
-  );
-
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(angle);
-  ctx.drawImage(f.imageObj, -w / 2, y, w, h);
-  ctx.restore();
+function takePhoto() {
+  app.takePhoto();
 }
